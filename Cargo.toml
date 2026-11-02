@@ -1,0 +1,12 @@
+[package]
+name = "system-maintenance-daemon"
+version = "0.1.0"
+edition = "2024"
+description = "A reference implementation of a Linux D-Bus System Daemon with Polkit authorization in Rust."
+authors = ["Fabiano Valim <valimfabiano@gmail.com>"]
+
+[dependencies]
+# Async runtime required by zbus
+tokio = {version = "1", features = ["full"]}
+#Modern D-Bus library for Rust
+zbus = "6.2.1"
