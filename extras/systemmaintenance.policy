@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Parh to create os copy this file = /usr/share/polkit-1/actions/com.example.systemmaintenance.policy -->
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+
+  <vendor>System Maintenance Project</vendor>
+  <vendor_url>https://github.com/valimfabiano/system-maintenance-daemon</vendor_url>
+
+  <!-- The action ID must match exactly what we ask in the Rust code -->
+  <action id="com.example.systemmaintenance.set-state">
+    <description>Change the system maintenance state</description>
+    <message>Authentication is required to change the system maintenance state.</message>
+    
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <!-- Require admin password for active local sessions -->
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
+</policyconfig>
