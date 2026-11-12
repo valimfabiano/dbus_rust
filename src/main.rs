@@ -1,41 +1,75 @@
-use zbus::{connection, interface};
+use std::collections::HashMap;
+use zbus::{connection, fdo, interface, message::Header, Connection};
+use zbus_polkit::policykit1::{AuthorityProxy, CheckAuthorizationFlags, Subject};
 
-/// Represents the internal state of our system daemon.
 struct MaintenanceManager {
     is_active: bool,
 }
 
 impl MaintenanceManager {
-    /// Idiomatic constructor to initialize the default state.
     pub fn new() -> Self {
         println!("[Daemon] Initializing default state (maintenance = false)...");
         Self { is_active: false }
     }
 }
 
-/// The D-Bus interface definition.
-/// This macro generates the necessary D-Bus introspection XML and handles routing.
 #[interface(name = "com.example.SystemMaintenance")]
 impl MaintenanceManager {
-    /// Read-only method: Any user can query the current state without authentication.
+    /// Read-only method: Any user can query the current state.
     async fn state(&self) -> bool {
-        println!("[Daemon] State query received. Current state: {}", self.is_active);
+        println!("[Daemon] State query received.");
         self.is_active
     }
 
-    /// Mutating method: Changes the system state.
-    /// (In the next phase, Polkit will block this if the user is not an administrator).
-    async fn set_state(&mut self, new_state: bool) -> String {
-        println!("[Daemon] State change request received. New state: {}", new_state);
-        
-        // TODO: Security Phase! Polkit authorization check will be injected here.
-        
+    /// Mutating method: Protected by Polkit
+    async fn set_state(
+        &mut self,
+        new_state: bool,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] conn: &Connection,
+    ) -> fdo::Result<String> {
+        println!("[Daemon] SetState request received. Verifying Polkit authorization...");
+
+        // 1. Identify the sender's D-Bus unique name for logging
+        let sender = header
+            .sender()
+            .ok_or_else(|| fdo::Error::Failed("Failed to identify sender".into()))?;
+
+        // 2. zbus 6: Create a Polkit Subject directly from the D-Bus message header!
+        let subject = Subject::new_for_message_header(&header)
+            .map_err(|e| fdo::Error::Failed(format!("Failed to create Subject: {}", e)))?;
+
+        // 3. Connect to the Polkit daemon using the AuthorityProxy
+        let polkit_proxy = AuthorityProxy::builder(conn)
+            .build()
+            .await
+            .map_err(|e| fdo::Error::Failed(format!("Polkit proxy error: {}", e)))?;
+
+        // 4. Ask Polkit if this sender is authorized
+        let check_result = polkit_proxy
+            .check_authorization(
+                &subject,
+                "com.example.systemmaintenance.set-state",
+                &HashMap::new(),
+                CheckAuthorizationFlags::ALLOW_USER_INTERACTION.into(),
+                "",
+            )
+            .await
+            .map_err(|e| fdo::Error::Failed(format!("Auth check failed: {}", e)))?;
+
+        // 5. Evaluate the result
+        if !check_result.is_authorized {
+            println!("[Daemon] WARNING: Authorization denied for sender {}", sender);
+            return Err(fdo::Error::AccessDenied("Polkit authorization failed".into()));
+        }
+
+        // 6. Execute the change if authorized
+        println!("[Daemon] Authorization GRANTED. Changing state to {}", new_state);
         self.is_active = new_state;
-        
-        format!("Success: System maintenance mode is now {}", self.is_active)
+
+        Ok(format!("Success: System maintenance mode is now {}", self.is_active))
     }
 }
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manager = MaintenanceManager::new();
@@ -46,10 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .await?;
 
-    println!("[Daemon] Successfully connected to the System Bus.");
+    println!("[Daemon] Successfully connected to the System Bus with Polkit security.");
     println!("[Daemon] Waiting for D-Bus commands...");
 
-    // Keep the asynchronous runtime alive indefinitely to serve requests.
     std::future::pending::<()>().await;
 
     Ok(())

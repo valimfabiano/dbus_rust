@@ -4,21 +4,21 @@ This repository serves as a practical, complete reference implementation of a Li
 
 ## 🎯 The Architecture
 
-To understand how Linux manages privileges (like changing network settings, mounting drives, or altering system power states), we implemented a mock "System Maintenance" service. 
+To understand how Linux manages privileges, we implemented a mock "System Maintenance" service containing:
 
 *   **The State:** A single boolean (`is_active`) residing in the daemon's memory.
-*   **The Daemon (`root`):** A Tokio-based async Rust program connected to the D-Bus System Bus via the `zbus` crate.
-*   **The Security (Polkit):** Any user can read the state. However, if a user attempts to change the state, the daemon uses `zbus_polkit` to pause the request, query Polkit, and prompt the user for an administrator password before proceeding.
+*   **The Daemon (`root`):** A Tokio-based async Rust program connected to the D-Bus System Bus via `zbus`.
+*   **The Security (Polkit):** Write operations are protected by `zbus_polkit`. It prompts the user for an administrator password before proceeding and utilizes `auth_admin_keep` to retain authorization for subsequent rapid requests.
+*   **The Client (`user`):** A lightweight Rust binary that generates a D-Bus proxy to communicate with the daemon natively, replacing the need for generic CLI tools like `busctl`.
 
 ## 🛠️ Prerequisites
 
-*   Linux operating system with `dbus` and `polkit` installed (standard on almost all distributions).
+*   Linux operating system with `dbus` and `polkit` installed.
 *   Rust toolchain (edition 2024).
-*   `busctl` command-line utility (part of `systemd`).
 
 ## 🚀 Setup & Installation
 
-Because this daemon connects to the **System Bus** and registers Polkit actions, you must install the security policy files into your Linux system directories before running the code.
+You must install the security policy files into your Linux system directories before running the code.
 
 ### 1. Install D-Bus Policy
 The D-Bus policy allows our daemon to claim the well-known name `com.example.SystemMaintenance`.
@@ -28,7 +28,7 @@ sudo cp extras/com.example.SystemMaintenance.conf /etc/dbus-1/system.d/
 ```
 
 ### 2. Install Polkit Policy
-The Polkit policy registers the `com.example.systemmaintenance.set-state` action and defines the authentication rules.
+The Polkit policy registers the `set-state` action and defines the authentication rules (configured with `auth_admin_keep` to avoid password fatigue).
 
 ```bash
 sudo cp extras/com.example.systemmaintenance.policy /usr/share/polkit-1/actions/
@@ -36,9 +36,8 @@ sudo cp extras/com.example.systemmaintenance.policy /usr/share/polkit-1/actions/
 
 ## 💻 Running the Project
 
-The daemon must be run as root to comply with the D-Bus policy.
-
 ### Start the Daemon (Terminal 1)
+The daemon must be run as root to comply with the D-Bus policy.
 
 ```bash
 cargo build
@@ -46,21 +45,13 @@ sudo ./target/debug/system-maintenance-daemon
 ```
 > **Expected Output:** `[Daemon] Successfully connected to the System Bus with Polkit security.`
 
-### Interact as a Standard User (Terminal 2)
-
-**1. Query the State (No password required)**
-
-```bash
-busctl --system call com.example.SystemMaintenance /com/example/SystemMaintenance com.example.SystemMaintenance State
-```
-> **Expected Output:** `b false`
-
-**2. Change the State (Polkit Authentication Prompt)**
+### Run the Rust Client (Terminal 2)
+Interact with the daemon as a standard user via the native Rust client.
 
 ```bash
-busctl --system call com.example.SystemMaintenance /com/example/SystemMaintenance com.example.SystemMaintenance SetState b true
+cargo run --bin client
 ```
-> **Expected Behavior:** Polkit will intercept the call and open a password prompt (GUI or CLI). If you authenticate successfully as an admin, the state will change to `true`.
+> **Expected Behavior:** Polkit will intercept the state change request and open a password prompt. Upon successful authentication, the state will toggle. Thanks to the `keep` policy, running the client again immediately after will bypass the password prompt.
 
 ## 📚 Libraries Used
 
